@@ -1,0 +1,43 @@
+{
+  "name": "dsh-btw-sidebar",
+  "version": "0.1.0",
+  "private": true,
+  "description": "DSH plugin: Codex-style /btw — open a fork of the current conversation in the native right Sidebar and answer there, without touching the main context or the Session list.",
+  "type": "module",
+  "license": "MIT",
+  "main": "./lib/host.js",
+  "exports": {
+    ".": "./lib/host.js",
+    "./client": "./lib/client.js",
+    "./protocol": "./lib/protocol.js",
+    "./package.json": "./package.json"
+  },
+  "engines": {
+    "node": ">=22.5"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "btw",
+    "side-chat",
+    "sidebar"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": []
+    }
+  }
+}

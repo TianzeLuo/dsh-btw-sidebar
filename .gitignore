@@ -1,0 +1,10 @@
+# 依赖与构建产物
+node_modules/
+*.log
+
+# 编辑器 / 系统
+.DS_Store
+Thumbs.db
+
+# 本地探针产物（真机验收时生成的截图、DOM 快照等）
+.probe/

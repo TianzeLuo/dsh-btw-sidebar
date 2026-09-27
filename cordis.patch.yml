@@ -1,0 +1,18 @@
+# dsh-btw-sidebar bundle patch.
+#
+# 只声明宿主侧 loader 行：浏览器半部由 package.json 的 `dsh.client` 声明 +
+# `exports["./client"]` 被 dsh-client-modules 自动发现，不需要在此登记。
+#
+# `name` 是裸包名，loader 的两段解析（先 dsh 安装目录，再 profile 的
+# node_modules）会落到本包 main / exports["."]，即 lib/host.js。
+#
+# `insert:` 行随包发布，`dsh plugin --profile web add <本包>` 会自动把它追加进该
+# profile 的 `dsh.profile.bundles`；**不要**再手写同 id 的 `- insert:`（重复会报
+# duplicate loader entry id）。
+#
+# 安装：dsh plugin --profile web add <包目录或包名>
+# 之后重启 dsh web（bundle 列表在启动时组装），客户端改动刷新页面即可。
+
+- insert:
+    - id: dsh-btw-sidebar
+      name: 'dsh-btw-sidebar'
