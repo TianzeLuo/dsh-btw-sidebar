@@ -25,22 +25,55 @@ import { apply as hostApply, inject as hostInject, name as hostName } from '../l
  */
 function fakeHost(options = {}) {
   const routes = []
-  const calls = { fork: [], rename: [], unarchive: [], archive: [] }
+  const calls = { fork: [], rename: [], unarchive: [], archive: [], awayRules: [], reveals: [] }
+  /** dsh-away-notify 的 awayNotify 服务替身：记录规则与揭示目标，并能按规则查询是否被抑制。 */
+  const awayRules = new Map()
+  const reveals = new Map()
+  const awayNotify = {
+    version: 1,
+    addRule(rule) {
+      calls.awayRules.push(rule)
+      awayRules.set(rule.id, rule)
+      return () => awayRules.delete(rule.id)
+    },
+    revealSession(sessionId, target) {
+      calls.reveals.push({ sessionId, ...target })
+      reveals.set(sessionId, { sessionId, ...target })
+      return () => reveals.delete(sessionId)
+    },
+    revealFor(sessionId) {
+      return reveals.get(sessionId)
+    },
+    isSuppressed(sessionId, event, context) {
+      for (const rule of awayRules.values()) {
+        if (rule.match(sessionId, event, context) === true) return rule.reason
+      }
+      return undefined
+    },
+  }
   const ctx = {
     inject(deps, callback) {
-      assert.deepEqual(deps, ['connection'], '宿主半部应只延迟注入 connection')
-      callback({
-        connection: {
-          fetch: {
-            register(route) {
-              routes.push(route)
-              return async () => {}
+      for (const dep of deps) {
+        if (dep === 'connection') {
+          callback({
+            connection: {
+              fetch: {
+                register(route) {
+                  routes.push(route)
+                  return async () => {}
+                },
+              },
             },
-          },
-        },
-      })
+          })
+        } else if (dep === 'awayNotify') {
+          if (options.withoutAwayNotify !== true) callback({ awayNotify })
+        } else {
+          throw new Error(`宿主半部注入了未预期的依赖：${dep}`)
+        }
+      }
     },
     get(name) {
+      if (name === 'awayNotify') return options.withoutAwayNotify === true ? undefined : awayNotify
       if (name === 'sessionController') {
         return {
           async fork(request) {
@@ -70,7 +103,7 @@ function fakeHost(options = {}) {
       return undefined
     },
   }
-  return { ctx, routes, calls }
+  return { ctx, routes, calls, awayNotify, reveals }
 }
 
 /**
@@ -177,6 +210,185 @@ test('宿主半部：归档失败如实上报', async () => {
   assert.equal(body.error.code, 'ARCHIVE_FAILED')
 })
 
+// ── 与 dsh-away-notify 的接线：被看着时不打扰 + 点通知回右栏 tab ─────────────
+//
+// 背景：侧边聊天是普通 fork 会话，而 away-notify 的浏览器半部只上报**主视图**的
+// 会话（`retainedBy.mainView`），所以它认不出用户其实正看着侧栏面板里的这条，跑完
+// 一轮就会误弹提示。修法不是让 away-notify 去猜标题，而是本插件通过它提供的
+// `awayNotify` 服务显式声明通知策略（契约见 dsh-away-notify README 的「给其他插件
+// 的接口」）。这几条用例锁住：
+//   - **apply 时注册规则 / fork、open 时登记会话与揭示目标**；
+//   - **语义 = 面板开着且页面被看着才静音**，切走照常提醒，关面板即失效；
+//   - **aborted 永久豁免**（只可能来自你点停止 / 关面板）；
+//   - **只按会话 id 匹配**（不做任何标题/关键词匹配）；
+//   - **接口缺失或关闭开关时不影响 /btw**。
+
+test('宿主半部：apply 时向 awayNotify 注册一条规则（id/reason 都是本插件）', () => {
+  const { ctx, calls } = fakeHost()
+  hostApply(ctx, {})
+  assert.equal(calls.awayRules.length, 1)
+  assert.equal(calls.awayRules[0].id, 'dsh-btw-sidebar')
+  assert.equal(calls.awayRules[0].reason, 'dsh-btw-sidebar')
+  assert.equal(typeof calls.awayRules[0].match, 'function')
+})
+
+test('宿主半部：fork 后立刻登记会话与「点击揭示」目标（早于面板发首条消息）', async () => {
+  const { ctx, routes, reveals } = fakeHost()
+  hostApply(ctx, {})
+  assert.equal(reveals.size, 0, 'fork 前不该登记任何会话')
+
+  await call(routes[0], { action: 'fork', parentSessionId: 's-parent', question: 'x' })
+  assert.deepEqual(reveals.get('s-child'), {
+    sessionId: 's-child',
+    resource: btwSessionAddress('s-child'),
+    reason: 'dsh-btw-sidebar',
+  })
+})
+
+test('宿主半部：面板显示在右栏且你正看着 dsh 时不打扰，右栏切到别的 tab 就恢复提醒', async () => {
+  const { ctx, routes, awayNotify } = fakeHost()
+  hostApply(ctx, {})
+  await call(routes[0], { action: 'fork', parentSessionId: 's-parent', question: 'x' })
+
+  // 面板还没显示：不算「被看着」，照常提醒
+  assert.equal(
+    awayNotify.isSuppressed('s-child', { kind: 'turn-complete' }, { pageAttended: true }),
+    undefined,
+    '面板没显示时不该抑制',
+  )
+
+  // 面板显示在右栏 + 你正看着 dsh → 不打扰
+  await call(routes[0], { action: 'open', sessionId: 's-child' })
+  await call(routes[0], { action: 'visible', sessionId: 's-child', visible: true })
+  assert.equal(
+    awayNotify.isSuppressed('s-child', { kind: 'turn-complete' }, { pageAttended: true }),
+    'dsh-btw-sidebar',
+  )
+  // 你切到别的应用/标签页 → 照常提醒
+  assert.equal(
+    awayNotify.isSuppressed('s-child', { kind: 'turn-complete' }, { pageAttended: false }),
+    undefined,
+    '你切走时应照常提醒（点通知会回右栏 tab）',
+  )
+
+  // 右栏切到别的 tab（面板还在，但不在前台）→ 照常提醒
+  await call(routes[0], { action: 'visible', sessionId: 's-child', visible: false })
+  assert.equal(
+    awayNotify.isSuppressed('s-child', { kind: 'turn-complete' }, { pageAttended: true }),
+    undefined,
+    '面板在后台时不该静音：这时才需要通知你',
+  )
+
+  // 再切回来 → 又不打扰
+  await call(routes[0], { action: 'visible', sessionId: 's-child', visible: true })
+  assert.equal(
+    awayNotify.isSuppressed('s-child', { kind: 'turn-complete' }, { pageAttended: true }),
+    'dsh-btw-sidebar',
+  )
+
+  // 关掉面板 → 彻底不再抑制
+  await call(routes[0], { action: 'close', sessionId: 's-child' })
+  assert.equal(awayNotify.isSuppressed('s-child', { kind: 'turn-complete' }, { pageAttended: true }), undefined)
+})
+
+test('宿主半部：可见性上报之后，仅「开着面板」不再静音', async () => {
+  const { ctx, routes, awayNotify } = fakeHost()
+  hostApply(ctx, {})
+  await call(routes[0], { action: 'fork', parentSessionId: 's-parent', question: 'x' })
+  await call(routes[0], { action: 'open', sessionId: 's-child' })
+  await call(routes[0], { action: 'visible', sessionId: 's-child', visible: false })
+  assert.equal(
+    awayNotify.isSuppressed('s-child', { kind: 'turn-complete' }, { pageAttended: true }),
+    undefined,
+    '已经能拿到可见性时就以它为准，不再用「开着」兜底',
+  )
+})
+
+test('宿主半部：页面上还是旧 bundle（从没上报可见性）时退回「开着就静音」', async () => {
+  const { ctx, routes, awayNotify } = fakeHost()
+  hostApply(ctx, {})
+  await call(routes[0], { action: 'fork', parentSessionId: 's-parent', question: 'x' })
+  await call(routes[0], { action: 'open', sessionId: 's-child' })
+  assert.equal(
+    awayNotify.isSuppressed('s-child', { kind: 'turn-complete' }, { pageAttended: true }),
+    'dsh-btw-sidebar',
+    '宁可退回上一版语义，也不要退化成最初的误弹',
+  )
+})
+
+test('宿主半部：visible 缺 sessionId 时给可读错误', async () => {
+  const { ctx, routes } = fakeHost()
+  hostApply(ctx, {})
+  const body = await call(routes[0], { action: 'visible', visible: true })
+  assert.equal(body.ok, false)
+  assert.equal(body.error.code, 'BAD_REQUEST')
+})
+
+test('宿主半部：关闭面板引发的 aborted 永不提醒（两种在场状态都压掉）', async () => {
+  const { ctx, routes, awayNotify } = fakeHost()
+  hostApply(ctx, {})
+  await call(routes[0], { action: 'fork', parentSessionId: 's-parent', question: 'x' })
+  await call(routes[0], { action: 'open', sessionId: 's-child' })
+  await call(routes[0], { action: 'close', sessionId: 's-child' })
+
+  // 关面板走 archiveSession({stopActivity:true}) → 会产出 aborted 轮次；那一下是纯噪声
+  assert.equal(awayNotify.isSuppressed('s-child', { kind: 'turn-aborted' }, { pageAttended: true }), 'dsh-btw-sidebar')
+  assert.equal(awayNotify.isSuppressed('s-child', { kind: 'turn-aborted' }, { pageAttended: false }), 'dsh-btw-sidebar')
+  // 别的会话不受影响
+  assert.equal(awayNotify.isSuppressed('s-other', { kind: 'turn-aborted' }, { pageAttended: false }), undefined)
+})
+
+test('宿主半部：抑制只认会话 id，不做任何标题/关键词匹配', async () => {
+  const { ctx, routes, awayNotify } = fakeHost()
+  hostApply(ctx, {})
+  await call(routes[0], { action: 'fork', parentSessionId: 's-parent', question: 'x' })
+  await call(routes[0], { action: 'open', sessionId: 's-child' })
+  await call(routes[0], { action: 'visible', sessionId: 's-child', visible: true })
+
+  // 一条标题同样是「侧边聊天 · …」、但不是本插件 fork 出来的会话：不得被误伤
+  assert.equal(
+    awayNotify.isSuppressed('s-manual', { kind: 'turn-complete', sessionTitle: '侧边聊天 · 手抄的标题' }, { pageAttended: true }),
+    undefined,
+  )
+})
+
+test('宿主半部：面板重新打开时补登记（重启后恢复的侧边聊天也受同样待遇）', async () => {
+  const { ctx, routes, awayNotify, reveals } = fakeHost()
+  hostApply(ctx, {})
+  assert.equal(reveals.size, 0)
+  await call(routes[0], { action: 'open', sessionId: 's-restored' })
+  await call(routes[0], { action: 'visible', sessionId: 's-restored', visible: true })
+  assert.equal(
+    awayNotify.isSuppressed('s-restored', { kind: 'turn-complete' }, { pageAttended: true }),
+    'dsh-btw-sidebar',
+  )
+  assert.equal(reveals.get('s-restored')?.resource, btwSessionAddress('s-restored'), '揭示目标也要补登记')
+})
+
+test('宿主半部：close 不摘掉揭示目标（点通知仍回右栏那个 tab）', async () => {
+  const { ctx, routes, reveals } = fakeHost()
+  hostApply(ctx, {})
+  await call(routes[0], { action: 'fork', parentSessionId: 's-parent', question: 'x' })
+  await call(routes[0], { action: 'close', sessionId: 's-child' })
+  assert.equal(reveals.get('s-child')?.resource, btwSessionAddress('s-child'))
+})
+
+test('宿主半部：awayNotify 服务缺失时不注册、也不影响 fork', async () => {
+  const { ctx, routes, calls } = fakeHost({ withoutAwayNotify: true })
+  assert.doesNotThrow(() => hostApply(ctx, {}))
+  assert.equal(calls.awayRules.length, 0)
+  assert.equal(calls.reveals.length, 0)
+  assert.equal((await call(routes[0], { action: 'fork', parentSessionId: 's-parent', question: 'x' })).ok, true)
+})
+
+test('宿主半部：suppressNotifications=false 时不声明抑制规则，但揭示目标照常登记', async () => {
+  const { ctx, routes, calls, reveals } = fakeHost()
+  hostApply(ctx, { suppressNotifications: false })
+  assert.equal(calls.awayRules.length, 0)
+  assert.equal((await call(routes[0], { action: 'fork', parentSessionId: 's-parent', question: 'x' })).ok, true)
+  assert.equal(reveals.get('s-child')?.resource, btwSessionAddress('s-child'), '点击仍应回到右栏 tab')
+})
+
 test('宿主半部：注册路由抛错时不把 apply 拖垮', () => {
   const ctx = {
     get: () => undefined,
@@ -225,6 +437,23 @@ const reactShim = {
       ...(children.length === 0 ? {} : { children: children.length === 1 ? children[0] : children }),
     },
   }),
+  /** `useEffect` 只收集不执行：测试显式运行，免得「渲染一下就发请求」污染别的用例。 */
+  useEffect: (fn) => {
+    reactEffects.push(fn)
+  },
+}
+
+/** 收集到的 effect；面板可见性用例会显式跑掉它们。 */
+const reactEffects = []
+
+/** 跑掉已收集的 effect，返回它们的清理函数（供模拟卸载）。 */
+function runEffects() {
+  const cleanups = []
+  while (reactEffects.length > 0) {
+    const cleanup = reactEffects.shift()()
+    if (typeof cleanup === 'function') cleanups.push(cleanup)
+  }
+  return cleanups
 }
 const clientExports = captured.definition.factory((specifier) => {
   if (specifier === 'react') return reactShim
@@ -501,6 +730,81 @@ test('浏览器半部：面板在任何异常下都渲染可见文案，绝不 r
   assert.equal(bound.props.children.type, 'slot')
   assert.equal(bound.props.children.key, 'btw.conversation', '绑定作用域后再渲染自己的子槽')
   client.disposeAll()
+})
+
+test('浏览器半部：按官方 tab.visible 上报面板可见性（变化才发，卸载补一次不可见）', async () => {
+  const client = fakeClient()
+  clientExports.apply(client.ctx)
+  installFetch(client)
+  const registered = client.slotBodies[0].component
+  const address = btwSessionAddress('s-child')
+
+  /**
+   * 渲染一次 tab body 并跑掉它注册的 effect。
+   *
+   * @param {boolean} visible - 官方 `useTabInfo().tab.visible` 的值。
+   * @returns {Array<() => void>} 清理函数（模拟切走 tab / 关面板时的卸载）。
+   */
+  const mount = (visible) => {
+    reactEffects.length = 0
+    const element = registered({
+      useTabInfo: () => ({ tab: { contentId: address, visible } }),
+      useResource: () => ({ status: 'none' }),
+      t: (key) => key,
+    })
+    assert.ok(element.type(element.props), 'body 应渲染出可见文案')
+    return runEffects()
+  }
+  const visibleCalls = () => client.hostCalls.filter((entry) => entry.action === 'visible')
+  const tick = () => new Promise((r) => setTimeout(r, 0))
+
+  // 面板显示在右栏 → 上报「可见」（这正是宿主静音的依据）
+  const cleanups = mount(true)
+  await tick()
+  assert.deepEqual(visibleCalls(), [{ action: 'visible', sessionId: 's-child', visible: true }])
+
+  // 同一个值重复渲染不再重复发（React 会反复求值，不节流会把宿主刷爆）
+  mount(true)
+  await tick()
+  assert.equal(visibleCalls().length, 1)
+
+  // 右栏折叠 / 切到别的 tab：组件卸载 → 补一次「不可见」
+  for (const cleanup of cleanups) cleanup()
+  await tick()
+  assert.deepEqual(visibleCalls().at(-1), { action: 'visible', sessionId: 's-child', visible: false })
+
+  // 再切回来 → 值又变了，重新上报
+  mount(true)
+  await tick()
+  assert.deepEqual(visibleCalls().at(-1), { action: 'visible', sessionId: 's-child', visible: true })
+
+  client.disposeAll()
+})
+
+test('浏览器半部：可见性上报失败不回滚本地状态、也不影响面板', async () => {
+  const client = fakeClient()
+  clientExports.apply(client.ctx)
+  const registered = client.slotBodies[0].component
+  const address = btwSessionAddress('s-child')
+  globalThis.fetch = () => Promise.reject(new Error('network down'))
+  const originalWarn = console.warn
+  console.warn = () => {}
+  try {
+    reactEffects.length = 0
+    const element = registered({
+      useTabInfo: () => ({ tab: { contentId: address, visible: true } }),
+      useResource: () => ({ status: 'none' }),
+      t: (key) => key,
+    })
+    assert.doesNotThrow(() => {
+      assert.ok(element.type(element.props))
+      runEffects()
+    })
+    await new Promise((r) => setTimeout(r, 10))
+  } finally {
+    console.warn = originalWarn
+    client.disposeAll()
+  }
 })
 
 test('浏览器半部：子槽组件渲染官方会话工厂（消息流 + 输入框那一整套）', () => {
