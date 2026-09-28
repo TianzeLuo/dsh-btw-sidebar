@@ -121,12 +121,14 @@ const ArchivedSessionGate = {
 dsh-away-notify 宿主                            dsh-btw-sidebar 宿主 / 浏览器半部
 ctx.provide('awayNotify', {                     ctx.inject(['awayNotify'], (c) => {
   suppressSession(sessionId, reason),             c.awayNotify.addRule({
-  revealSession(sessionId, { resource }),           id: 'dsh-btw-sidebar', reason: 'dsh-btw-sidebar',
-  addRule({ id, reason, match }),                   match: (sid, ev, ctx) => sideChats.has(sid) &&
-  isSuppressed / revealFor / snapshot,                     (ev?.kind === 'turn-aborted' ||
-})                                                          (displayed.has(sid) && ctx.pageAttended)),
+  revealSession(sessionId, { resource,             id: 'dsh-btw-sidebar', reason: 'dsh-btw-sidebar',
+                mainSessionId }),                  match: (sid, ev, ctx) => sideChats.has(sid) &&
+  addRule({ id, reason, match }),                         (ev?.kind === 'turn-aborted' ||
+  isSuppressed / revealFor / snapshot,                     (displayed.has(sid) && ctx.pageAttended)),
                                                   })
-                                              ──► fork/open: revealSession(sid, { resource: btwSessionAddress(sid) })
+                                              ──► fork/open: revealSession(sid, {
+                                                    resource: btwSessionAddress(sid),
+                                                    mainSessionId: <fork 的父会话> })
                                               ──► 浏览器半部：官方 useTabInfo().tab.visible 变化
                                                   → POST {action:'visible', sessionId, visible}
 ```
@@ -135,9 +137,9 @@ ctx.provide('awayNotify', {                     ctx.inject(['awayNotify'], (c) =
 
 | 时机 | 谁做 | 结果 |
 |---|---|---|
-| `fork` 成功 | 宿主：记入 `sideChatSessions`，声明揭示目标 `dsh-resource://btw/session/<id>` | 点通知时能回到右栏那个 tab |
+| `fork` 成功 | 宿主：记入 `sideChatSessions`，声明揭示目标 `dsh-resource://btw/session/<id>` + 归属主会话（= fork 的父会话） | 点通知时先切回原会话，再回到它在右栏的那个 tab |
 | 面板显示在右栏 | 浏览器：`tab.visible` 变 true → 上报 `visible:true` | 面板显示中且页面被看着 → 不打扰 |
-| 面板在后台（右栏切到别的 tab / 折叠 / 主视图换会话） | 浏览器：`tab.visible` 变 false → 上报 `visible:false` | 照常提醒（这时通知才有用）；点 → 右栏 tab |
+| 面板在后台（右栏切到别的 tab / 折叠 / 主视图换会话） | 浏览器：`tab.visible` 变 false → 上报 `visible:false` | 照常提醒（这时通知才有用）；点 → 切回归属会话 + 聚焦右栏 tab |
 | 你切到别的应用（页面失焦） | 无需动作：规则里的 `pageAttended` 变 false | 照常提醒 |
 | 任意轮次 `turn-aborted` | 宿主：规则直接命中 | 永不提醒（只可能来自你点停止 / 关面板） |
 | `close`（面板关闭） | 宿主：从 `openSideChats` / `visibleSideChats` 移除 | 不再抑制（会话已归档，本来也跑不了轮次） |
@@ -162,6 +164,17 @@ ctx.provide('awayNotify', {                     ctx.inject(['awayNotify'], (c) =
 - **点击落点由本插件给地址、away-notify 转发**：浏览器半部拿到 reveal 后先
   `ctx.sidebarRight.openResource(地址)`；右栏按 `contentId` 查重，**已开着的 tab 会被聚焦而不是
   新开一个**。地址对 away-notify 是不透明字符串，它不认识 `btw` 协议。
+- **归属主会话不能省**：右栏的状态是**按主视图会话分域**的（`dsh-client-ui-sidebar-right` 的
+  `bySession[sessionId]`），`openResource()` 只作用于当前挂载的那条会话。所以揭示目标要带上
+  「第一次显示这个 tab 的会话」（`mainSessionId`），浏览器半部先 `uiWorkspace.openSession` 切过去、
+  等 `sidebarRight.mounted` 确认，再打开。少了这一步的实测症状就是这份文档对应的那次 bug：
+  在 B 里点属于 A 的侧栏通知 → 左栏仍是 B、tab 开进 B 的右栏；而且资源注册表按**地址**引用计数
+  （`dsh-client-resources` 的 `holders`），A、B 各持一个 tab 时只关 A 的那个不会中止资源流，
+  会话也就不会归档（必须把 B 的那个也关掉）。
+- **关面板兜底也要带上会话**：`ctx.sidebarRight.openTabs` 的每条记录是
+  `{ sessionId, tabId, kind, contentId }`，同一条侧边聊天可能在不同会话的右栏里各有一个 tab。
+  「还开着」必须按 `(归属会话, 地址)` 判定，不能只看 `contentId`——否则别的会话里的同名 tab 会
+  把这条会话的关闭动作吞掉。
 - **降级**：`awayNotify` 服务缺失（away-notify 没装 / 版本旧）时只跳过声明，`/btw` 全流程不受
   影响，点击退回「切主视图那条会话」；`suppressNotifications: false` 只关抑制，揭示目标照常登记。
 - **回归锁**：`test/wiring.test.mjs` 有一条用例专门断言「标题同样以『侧边聊天 ·』开头、但不是本
@@ -174,8 +187,10 @@ ctx.provide('awayNotify', {                     ctx.inject(['awayNotify'], (c) =
   这条脚本补的就是它。
 - **已知缺口**：策略集合是宿主进程内的内存态。dsh 重启后，早期 fork 出来的侧边聊天若被从
   「已归档」手动恢复，会失去「被看着不打扰」与「点击回右栏」这两项待遇——没有再打开一次右栏面板
-  （`open` 会补登记）就一直如此。DSH 没有可写的会话标记位（`SessionForkRequest` 只有
-  `sessionId`/`atSeq`；session header 无扩展字段，`origin` 只允许 `'subagent'`），所以这个缺口堵不上。
+  （`open` 会补登记）就一直如此。归属主会话例外：它还能从 fork 血缘（`header.parentSession`）反推
+  出来（`ownerOf`），所以补登记之后揭示目标依然带得上归属。DSH 没有可写的会话标记位
+  （`SessionForkRequest` 只有 `sessionId`/`atSeq`；session header 无扩展字段，`origin` 只允许
+  `'subagent'`），登记本身仍堵不上。
 
 ## DSH 契约上的坑（本插件踩到/绕开的）
 

@@ -19,7 +19,7 @@
 | Profile / App | **`web`**：需要原生右侧栏与客户端模块（`dsh.client.platform = "web"`，其他 app 下客户端半部不会加载）。headless / desktop profile 不适用 |
 | Node | `>= 22.5`（`engines`；实测 v24） |
 | OS | **Linux / WSL ✅**；**Windows ✅**（检出与 `$DSH_HOME` 跨盘符时必须用脚本，见下） |
-| 可选依赖 | `dsh-away-notify`：装了才有「看着面板不打扰 + 点通知回到右栏」。缺席时 `/btw` 照常可用，通知走默认行为（见 [docs/notifications.md](docs/notifications.md)） |
+| 可选依赖 | `dsh-away-notify`：装了才有「看着面板不打扰 + 点通知**切回原会话**并回到它的右栏那个 tab」。缺席时 `/btw` 照常可用，通知走默认行为（见 [docs/notifications.md](docs/notifications.md)） |
 
 ## 安装
 

@@ -100,6 +100,17 @@ function fakeHost(options = {}) {
           },
         }
       }
+      if (name === 'sessions') {
+        // 只用来验证「归属主会话」的 fork 血缘回退（parentOf 未给时视为拿不到会话）。
+        const parentOf = options.parentOf ?? {}
+        return {
+          get(sessionId) {
+            const parent = parentOf[sessionId]
+            if (typeof parent !== 'string') return undefined
+            return { header: { id: sessionId, parentSession: parent } }
+          },
+        }
+      }
       return undefined
     },
   }
@@ -241,8 +252,21 @@ test('宿主半部：fork 后立刻登记会话与「点击揭示」目标（早
   assert.deepEqual(reveals.get('s-child'), {
     sessionId: 's-child',
     resource: btwSessionAddress('s-child'),
+    // 归属主会话 = fork 的父会话：右栏 tab 是按主视图会话分域的，点击回跳必须先切回它。
+    mainSessionId: 's-parent',
     reason: 'dsh-btw-sidebar',
   })
+})
+
+test('宿主半部：重启后内存态丢失时，用会话 header 的 fork 血缘反推归属主会话', async () => {
+  const { ctx, routes, reveals } = fakeHost({ parentOf: { 's-restored': 's-origin' } })
+  hostApply(ctx, {})
+  await call(routes[0], { action: 'open', sessionId: 's-restored' })
+  assert.equal(
+    reveals.get('s-restored')?.mainSessionId,
+    's-origin',
+    '没有内存记录时要能从 header.parentSession 推出归属，否则点通知又会开进当前会话的右栏',
+  )
 })
 
 test('宿主半部：面板显示在右栏且你正看着 dsh 时不打扰，右栏切到别的 tab 就恢复提醒', async () => {
@@ -1053,6 +1077,34 @@ test('浏览器半部：取消归档失败只告警，不阻断面板', async ()
     await iterator.next()
   } finally {
     console.warn = originalWarn
+    delete globalThis.fetch
+    client.disposeAll()
+  }
+})
+
+test('浏览器半部：tab 只挂在**别的**主视图会话的右栏里时，照样兜底归档', async () => {
+  // 右栏的状态是按主视图会话分域的：同一条侧边聊天可能因为点过通知而在另一条会话的
+  // 右栏里留下一个同地址的 tab（老版本行为）。只看 contentId 会把它当成「还开着」，
+  // 于是在归属会话里关掉 tab 也不会归档——本用例把这条锁死。
+  const client = fakeClient()
+  clientExports.apply(client.ctx)
+  const claim = client.sources[0].onPick({ session: { sessionId: 's-owner' }, candidate: { name: 'btw' } }).claim
+  installFetch(client)
+  try {
+    await claim.submit('问题', undefined, [])
+    const address = btwSessionAddress('s-child')
+    const closeCalls = () => client.hostCalls.filter((entry) => entry.action === 'close').length
+
+    // 归属会话里出现过 → 记为开着。
+    client.setSnapshot([{ sessionId: 's-owner', tabId: 't1', kind: 'btw', contentId: address }])
+    client.fire()
+    // 归属会话里没了，只剩另一条会话的右栏里那个同地址 tab。
+    client.setSnapshot([{ sessionId: 's-other', tabId: 't2', kind: 'btw', contentId: address }])
+    client.fire()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    assert.equal(closeCalls(), 1, '别的会话里的同名 tab 不该阻止归档')
+    assert.equal(client.hostCalls.at(-1).sessionId, 's-child')
+  } finally {
     delete globalThis.fetch
     client.disposeAll()
   }

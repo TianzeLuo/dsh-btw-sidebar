@@ -13,15 +13,17 @@
 
 - **抑制**：`addRule({ id, reason, match })`，只按**自己 fork 出来的会话 id** 匹配，
   **不做任何标题/关键词匹配**（改标题不影响，也不会误伤别的插件）；
-- **揭示**：`revealSession(sessionId, { resource })`，声明「这条会话属于右栏某个 tab」——点它的通知
-  应该回到那个 tab，而不是在主视图里新开一条。
+- **揭示**：`revealSession(sessionId, { resource, mainSessionId })`，声明「这条会话属于右栏某个 tab」——
+  点它的通知应该回到那个 tab，而不是在主视图里新开一条。`mainSessionId` 是它的**归属主会话**（发起
+  `/btw` 的那条，也是第一次显示这个 tab 的会话）：右栏的状态按主视图会话分域，不带归属就会把 tab
+  开进你**当时正看着**的那条会话的右栏。
 
 ## 行为矩阵
 
 | 情形 | 通知 | 点通知 |
 |---|---|---|
 | 面板**真的显示在右栏**且你正看着 dsh（页面可见 + 有焦点） | 静音 | — |
-| 面板在后台（右栏切到别的 tab / 右栏折叠 / 主视图换了会话） | 照常提醒 | 回到右栏那个 tab：已开着就聚焦，没开就新开并展开右栏 |
+| 面板在后台（右栏切到别的 tab / 右栏折叠 / 主视图换了会话） | 照常提醒 | **先切回侧边聊天的归属主会话**，再在它的右栏打开那个 tab：已开着就聚焦，没开就新开并展开右栏 |
 | 你切到别的应用 / 标签页 | 照常提醒 | 同上 |
 | `turn-aborted`（你点停止，或关面板时的 `stopActivity`） | **永不提醒** | — |
 | 面板已关闭（会话重新归档） | 其余类型无从触发 | — |
@@ -37,6 +39,7 @@
 | away-notify 未安装 / 无 `awayNotify` 服务 | 跳过声明，退回「会弹通知 + 点击切主视图」，`/btw` 不受影响 |
 | 服务存在但缺 `addRule` | 跳过抑制声明并记一条日志；揭示仍生效 |
 | `revealSession` 的地址没有 tab 类型认领 / 右栏不可用 | 点击退回主视图（见 [limitations.md](limitations.md) 第 7 条） |
+| 归属主会话的右栏没能在 3 秒内挂载（`REVEAL_TIMEOUT_MS`） | 同样退回主视图；任何情况下都不会开进你当时正看着的那条会话的右栏 |
 
 排障：把 away-notify 的 `op:'state'` 打到浏览器控制台，响应里的 `suppressed` 字段会列出被抑制的会话
 与生效的规则。
@@ -46,7 +49,7 @@
 | 方法 | 用途 |
 |---|---|
 | `addRule({ id, reason, match(sessionId, event, context) })` | 按类声明抑制；`context` 含 `{ attended, pageAttended }` |
-| `revealSession(sessionId, { resource, reason })` | 声明点击揭示目标（`dsh-resource://…` 地址，由 away-notify 不透明转发） |
+| `revealSession(sessionId, { resource, mainSessionId, reason })` | 声明点击揭示目标（`dsh-resource://…` 地址 + 归属主视图会话，由 away-notify 不透明转发） |
 
 完整接口（还有 `suppressSession` / `releaseSession` / `isSuppressed` / `revealFor` / `snapshot`）见
 [dsh-away-notify 的「给其他插件的接口：抑制与点击揭示」](../../dsh-away-notify/README.md#给其他插件的接口抑制与点击揭示)；
