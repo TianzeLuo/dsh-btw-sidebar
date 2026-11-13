@@ -102,7 +102,7 @@ const ArchivedSessionGate = {
 
 ## 与 dsh-away-notify 的接线
 
-侧边聊天是**普通会话**，跑完一轮也会触发 away-notify 的 `turn-complete`。问题在于 away-notify 的
+侧边聊天是**普通会话**，跑完一轮也会触发 [dsh-away-notify](https://github.com/TianzeLuo/dsh-away-notify) 的 `turn-complete`。问题在于 away-notify 的
 浏览器半部只上报**主视图**的会话（`byId[].retainedBy.mainView`），侧栏面板里的子会话不在其中——
 宿主的在场判定认不出「用户正看着这条」，于是照弹（点通知还会跳到那条会话）。
 
@@ -191,6 +191,18 @@ ctx.provide('awayNotify', {                     ctx.inject(['awayNotify'], (c) =
   出来（`ownerOf`），所以补登记之后揭示目标依然带得上归属。DSH 没有可写的会话标记位
   （`SessionForkRequest` 只有 `sessionId`/`atSeq`；session header 无扩展字段，`origin` 只允许
   `'subagent'`），登记本身仍堵不上。
+
+## 配置
+
+在 profile 的 `cordis.patch.yml` 里按 id 覆盖（改配置需要重启 `dsh web`）：
+
+| 键 | 默认 | 作用 |
+| --- | --- | --- |
+| `titlePrefix` | `侧边聊天` | 会话与标签页的标题前缀 |
+| `suppressNotifications` | `true` | 面板显示在右栏且你正看着 dsh 时静音 |
+| `debug` | `false` | 打印诊断日志 |
+
+`suppressNotifications: false` 只是不声明抑制规则（通知照弹），「点通知回到右栏标签页」不受影响。语义与降级细节见 [notifications.md](notifications.md)。
 
 ## DSH 契约上的坑（本插件踩到/绕开的）
 

@@ -8,3 +8,8 @@ Thumbs.db
 
 # 本地探针产物（真机验收时生成的截图、DOM 快照等）
 .probe/
+
+# 本机证据与采集产物：几何 JSON、DOM dump、截图一律不入库
+docs/*
+!docs/*.md
+!docs/images/

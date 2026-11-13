@@ -1,6 +1,6 @@
 # 与 dsh-away-notify 的集成（可选）
 
-`dsh-away-notify` **不是必需依赖**：没装（或版本旧到没有 `awayNotify` 接口）时本插件静默跳过声明，
+[dsh-away-notify](https://github.com/TianzeLuo/dsh-away-notify) **不是必需依赖**：没装（或版本旧到没有 `awayNotify` 接口）时本插件静默跳过声明，
 `/btw` 照常可用，只是通知退回默认行为。
 
 ## 为什么需要这层接线
@@ -52,5 +52,5 @@
 | `revealSession(sessionId, { resource, mainSessionId, reason })` | 声明点击揭示目标（`dsh-resource://…` 地址 + 归属主视图会话，由 away-notify 不透明转发） |
 
 完整接口（还有 `suppressSession` / `releaseSession` / `isSuppressed` / `revealFor` / `snapshot`）见
-[dsh-away-notify 的「给其他插件的接口：抑制与点击揭示」](../../dsh-away-notify/README.md#给其他插件的接口抑制与点击揭示)；
+[dsh-away-notify 的 README](https://github.com/TianzeLuo/dsh-away-notify)；
 接口流程图与三条被否掉的替代方案见 [development.md](development.md)。

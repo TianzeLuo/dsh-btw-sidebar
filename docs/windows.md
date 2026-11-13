@@ -5,13 +5,13 @@
 profile 在 `C:\Users\<你>\.dsh`（C:），插件检出在别的盘（例如 `F:`）。直接：
 
 ```powershell
-dsh plugin --profile web add F:\project\tools\plugin\dsh-btw-sidebar
+dsh plugin --profile web add F:\path\to\dsh-btw-sidebar
 ```
 
 命令**退出码 0**，只有一条很容易忽略的 warning：
 
 ```text
-+ dsh-btw-sidebar link:F:/project/tools/plugin/dsh-btw-sidebar
++ dsh-btw-sidebar link:F:/path/to/dsh-btw-sidebar
 dsh: warning: dsh-btw-sidebar declares no dsh.bundle — installed as a plain dependency...
 ```
 
@@ -22,7 +22,7 @@ dsh: warning: dsh-btw-sidebar declares no dsh.bundle — installed as a plain de
 
 ```text
 linkType = Junction
-target   = C:\Users\27045\.dsh\profiles\web\F:\project\tools\plugin\dsh-btw-sidebar   ← 不存在
+target   = C:\Users\<你>\.dsh\profiles\web\F:\path\to\dsh-btw-sidebar   ← 不存在
                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ profile 目录被粘在绝对路径前面
 ```
 
