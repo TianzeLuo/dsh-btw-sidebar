@@ -16,6 +16,14 @@
     "node": ">=22.5",
     "dsh": ">=0.2.2-rc.3"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TianzeLuo/dsh-btw-sidebar.git"
+  },
+  "homepage": "https://github.com/TianzeLuo/dsh-btw-sidebar#readme",
+  "bugs": {
+    "url": "https://github.com/TianzeLuo/dsh-btw-sidebar/issues"
+  },
   "files": [
     "lib",
     "scripts",
