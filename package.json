@@ -10,6 +10,8 @@
     ".": "./lib/host.js",
     "./client": "./lib/client.js",
     "./protocol": "./lib/protocol.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
     "./package.json": "./package.json"
   },
   "engines": {
@@ -27,8 +29,18 @@
   "files": [
     "lib",
     "scripts",
-    "docs",
     "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "docs/development.md",
+    "docs/limitations.md",
+    "docs/notifications.md",
+    "docs/troubleshooting.md",
+    "docs/windows.md",
+    "docs/DETAIL.md",
+    "docs/DETAIL.zh.md",
+    "docs/preview.svg",
+    "LICENSE",
     "README.md"
   ],
   "scripts": {

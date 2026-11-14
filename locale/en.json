@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "Btw side chat",
+    "description": "Opens a fork of the current conversation in the native right sidebar when you type /btw, so a side question runs with real tools and approvals without touching the main transcript or the session list. Closing the tab archives the side chat.",
+    "detail": "docs/DETAIL.md"
+  }
+}

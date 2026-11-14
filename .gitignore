@@ -12,4 +12,5 @@ Thumbs.db
 # 本机证据与采集产物：几何 JSON、DOM dump、截图一律不入库
 docs/*
 !docs/*.md
+!docs/preview.svg
 !docs/images/
